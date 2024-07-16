@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"myRedis/aof"
 	"myRedis/handler"
 	"myRedis/resp"
 	"net"
@@ -17,6 +18,25 @@ func main() {
 	if err != nil {
 		fmt.Println("Error in listner:", err)
 	}
+
+	aof, err := aof.NewAOF("database.aof")
+	if err != nil {
+		fmt.Println("Error in AOF setup:", err)
+		os.Exit(1)
+	}
+	defer aof.Close()
+	aof.Read(func(val resp.Value) {
+		command := strings.ToUpper(val.Array[0].Bulk)
+
+		args := val.Array[1:]
+
+		handler, ok := handler.Handlers[command]
+		if !ok {
+			fmt.Println("Invalid command: ", command)
+			return
+		}
+		handler(args)
+	})
 
 	conn, err := l.Accept()
 	if err != nil {
@@ -47,8 +67,6 @@ func main() {
 			continue
 		}
 
-		fmt.Println("Value:", value)
-
 		command := strings.ToUpper(value.Array[0].Bulk)
 
 		writer := resp.NewWriter(conn)
@@ -62,6 +80,10 @@ func main() {
 			continue
 		}
 		result := handler(args)
+
+		if command == "SET" || command == "HSET" {
+			aof.Write(value)
+		}
 
 		writer.Write(result)
 	}
